@@ -3,13 +3,15 @@ import dash
 import dash_core_components as dcc
 import dash_html_components as html
 import pandas as pd
-import numpy as np
 import plotly.graph_objs as go
+import numpy as np
+from collections import namedtuple
+from collections import OrderedDict
+import plotly.figure_factory as ff
 
 import flask
 import glob
 import os
-import pprint
 
 IMAGE_DIRECTORY = os.getcwd() + '/stimuli'
 LIST_OF_IMAGES = [os.path.basename(x) for x in glob.glob('{}'.format(IMAGE_DIRECTORY))]
@@ -27,6 +29,27 @@ MAPSIZE = {'Mapname': ['Antwerpen','Berlin','Bordeaux','Koln','Frankfurt','Hambu
                         1650,1648,1649,1652,1649,1650,871,1650,1650,1649]}
 MAPSIZE= pd.DataFrame(data=MAPSIZE)
 
+def make_trace(dataframe, user, color):
+    trace = go.Scatter(
+        x=dataframe['MappedFixationPointX'],
+        y=dataframe['MappedFixationPointY'],
+        text=dataframe['FixationDuration'],
+        mode='lines+markers',
+        name=user,
+        marker=dict(
+            size=8,
+            opacity= 0.5,
+            color=(color)
+        ),
+        line=dict(
+            color=(color),
+            width=0.7
+        )
+    )
+
+    return trace
+
+
 def split_data_on_map(mapname):
     dff = DF.loc[DF['StimuliName'] == mapname]
     return dff
@@ -43,23 +66,9 @@ def split_data_on_user(usernames, dataframe):
             i = (i + 89)%255
             j = (j + 89)%255
             k = (k + 89)%255
+            color = 'rgb(' + str(i) + ','+ str(j) + ','+ str(k) + ')'
             data = dataframe.loc[dataframe['user'] == username]
-            trace = go.Scatter(
-                x=data['MappedFixationPointX'],
-                y=data['MappedFixationPointY'],
-                text=data['FixationDuration'],
-                mode='lines+markers',
-                name=username,
-                marker=dict(
-                    size=8,
-                    opacity= 0.5,
-                    color=('rgb(' + str(i) + ','+ str(j) + ','+ str(k) + ')')
-                ),
-                line=dict(
-                    color=('rgb(' + str(i) + ','+ str(j) + ','+ str(k) + ')'),
-                    width=0.7
-                )
-            )
+            trace = make_trace(data, username, color)
             traces.append(trace)
     else:
         traces = split_data_on_user(dataframe['user'].unique(), dataframe)
@@ -164,17 +173,19 @@ app.layout = html.Div(className="container", children=[
                             values=[]
                         )
                     ], style={'visibility':'hidden'}),
-                    html.Label('Select length of gaze:'),
-                    dcc.Slider(
-                        id='time-slider',
-                            min=0,
-                            max=20,
-                            step=0.5,
-                            value=0,
-                            marks={
-                                0: '0'
-                            }
-                    ),
+                    html.Div(id='time-selection', children=[
+                        html.Label('Select length of gaze:'),
+                        dcc.Slider(
+                            id='time-slider',
+                                min=0,
+                                max=20,
+                                step=0.5,
+                                value=0,
+                                marks={
+                                    0: '0'
+                                }
+                        )
+                    ], style={'visibility':'hidden'}),
                 ]),
             ]),
         ]),
@@ -183,7 +194,15 @@ app.layout = html.Div(className="container", children=[
         html.Div(className="col-lg-6 col-md-12", children=[
             html.Div(className="card", children=[
                 html.Div(className="card-header", children=[
-                    html.H3('Matrix visualization', className="card-title"),
+                    html.H3('Visualization', className="card-title"),
+                    html.Div([
+                        dcc.RadioItems(
+                            id='dropdown-a',
+                            options=[{'label': i, 'value': i} for i in ['Adjacency Matrix', 'Gaze Map', 'Visual Attention Map']],
+                            value='Gaze Map'
+                        ),
+                        html.Div(id='output-a'),
+                        ]),
                 ]),
                 html.Div(className="card-body", children=[
                     dcc.Graph(id='indicator-graphic')
@@ -198,7 +217,7 @@ app.layout = html.Div(className="container", children=[
                     html.H3('Output panel', className="card-title"),
                 ]),
                 html.Div(className="card-body", children=[
-                    #Output here
+                    # Output here
                 ])
             ])
         ]),
@@ -255,6 +274,7 @@ def update_graph(map, user, compare_users, compare_maps):
                 range=[0, 1200]
             ),
             title=str(map),
+            legend=dict(orientation="h"),
             margin={'l': 50, 'b': 40, 't': 50, 'r': 50},
             hovermode='closest',
             images= [dict(
@@ -298,6 +318,15 @@ def update_checkbox_user(user):
 
 @app.callback(
     dash.dependencies.Output('compare-maps', 'style'),
+    [dash.dependencies.Input('map-dropdown', 'value')])
+def update_checkbox_map(map):
+    if map == '':
+        return {'visibility':'hidden'}
+    else:
+        return {'visibility':'visible'}
+
+@app.callback(
+    dash.dependencies.Output('time-selection', 'style'),
     [dash.dependencies.Input('map-dropdown', 'value')])
 def update_checkbox_map(map):
     if map == '':
