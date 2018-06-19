@@ -11,31 +11,25 @@ import glob
 import os
 import pprint
 
-# Dit moet je eigen path zijn, anders werkt het niet
-# Olof: /Users/olofmorra/Google Drive/Visualization/Code/Visualization tool/stimuli
-# ^ Nadine: Nee dit hoeft niet als je gewoon de current working directory ophaalt
-image_directory = os.getcwd() + '/stimuli'
-list_of_images = [os.path.basename(x) for x in glob.glob('{}'.format(image_directory))]
-static_image_route = '/static/'
+IMAGE_DIRECTORY = os.getcwd() + '/stimuli'
+LIST_OF_IMAGES = [os.path.basename(x) for x in glob.glob('{}'.format(IMAGE_DIRECTORY))]
+STATIC_IMAGE_ROUTE = '/static/'
 
+DF = pd.read_csv("fixation_data_correct.csv", sep=';')
+STIMULI = DF['StimuliName'].unique()
+USERS = DF['user'].unique()
 
-df = pd.read_csv("fixation_data_correct.csv", sep=';')
-stimuli = df['StimuliName'].unique()
-users = df['user'].unique()
-
-
-
-mapsize = {'Mapname': ['Antwerpen','Berlin','Bordaux','Koln','Frankfurt','Hamburg',
+MAPSIZE = {'Mapname': ['Antwerpen','Berlin','Bordeaux','Koln','Frankfurt','Hamburg',
                         'Moskau','Riga','Tokyo','Barcelona','Bologne','Brussel','Budapest',
                         'Dusseldorf','Goteburg','Hong_Kong','Krakau','Ljubljana','New_York',
                         'Paris','Pisa','Venedig','Warschau','Zurich'],
             'sizex': [1651,1648,1692,1894,1892,1651,1648,1650,1630,1652,1650,1650,1645,872,
                         1650,1648,1649,1652,1649,1650,871,1650,1650,1649]}
-mapsize = pd.DataFrame(data=mapsize)
+MAPSIZE= pd.DataFrame(data=MAPSIZE)
 
-def split_data_on_map(mapname, dataframe):
-    dataframe = dataframe.loc[dataframe['StimuliName'] == mapname]
-    return dataframe
+def split_data_on_map(mapname):
+    dff = DF.loc[DF['StimuliName'] == mapname]
+    return dff
 
 def split_data_on_user(usernames, dataframe):
     data = dataframe.loc[dataframe['user'] == ""]
@@ -53,11 +47,11 @@ def split_data_on_user(usernames, dataframe):
             trace = go.Scatter(
                 x=data['MappedFixationPointX'],
                 y=data['MappedFixationPointY'],
-                text=username,
+                text=data['FixationDuration'],
                 mode='lines+markers',
                 name=username,
                 marker=dict(
-                    size=5,
+                    size=8,
                     opacity= 0.5,
                     color=('rgb(' + str(i) + ','+ str(j) + ','+ str(k) + ')')
                 ),
@@ -72,9 +66,48 @@ def split_data_on_user(usernames, dataframe):
 
     return traces
 
-def split_mapsize(map_stripped):
-    size = mapsize.loc[mapsize['Mapname'] == map_stripped]['sizex']
+# Add data of the same map in other color
+def add_map(map):
+    mapname = ""
+    name = ""
+    color = ""
+
+    # Two possibiliets: color or grayscale map
+    if map[2] == "b":
+        mapname = map[0:2] + map[3:]
+        name = 'Colored map'
+        color = 'rgb(0,191,255)'
+    else:
+        mapname = map[0:2] + 'b' + map[2:]
+        name = 'Grayscale map'
+        color = 'rgb(128,128,128)'
+
+    dff = split_data_on_map(mapname)
+
+    trace = go.Scatter(
+        x=dff['MappedFixationPointX'],
+        y=dff['MappedFixationPointY'],
+        text=dff['Timestamp'],
+        mode='lines+markers',
+        name=name,
+        marker=dict(
+            size=7,
+            opacity= 0.5,
+            color=(color)
+        ),
+        line=dict(
+            color=(color),
+            width=0.5
+        )
+    )
+
+    return trace
+
+
+def set_mapsize(map_stripped):
+    size = MAPSIZE.loc[MAPSIZE['Mapname'] == map_stripped]['sizex']
     ysize = size.iloc[0]
+
     return ysize
 
 app = dash.Dash()
@@ -101,18 +134,47 @@ app.layout = html.Div(className="container", children=[
                     html.Label('Select a map:'),
                     dcc.Dropdown(
                         id='map-dropdown',
-                        options=[{'label': i, 'value': i} for i in stimuli],
-                        value='map',
+                        options=[{'label': i, 'value': i} for i in STIMULI],
+                        value='',
                         placeholder='Select a map'
                     ),
                     html.Label('Select a user:'),
                     dcc.Dropdown(
                         id='user-dropdown',
-                        options=[{'label': j, 'value': j} for j in users],
+                        options=[{'label': j, 'value': j} for j in USERS],
                         value=[],
                         placeholder='Select a user',
                         multi = True
-                    )
+                    ),
+                    html.Div(id='compare-maps', children=[
+                        html.Label('Compare color versus grayscale:'),
+                        dcc.Checklist(
+                            id='compare-checkbox-maps',
+                            options=[
+                                {'label': ' Compare maps', 'value': 'Compare'}],
+                                values=[]
+                        )
+                    ], style={'visibility':'hidden'}),
+                    html.Div(id='compare-users', children=[
+                        html.Label('Compare selected user(s) to all users:'),
+                        dcc.Checklist(
+                            id='compare-checkbox-users',
+                            options=[
+                                {'label': ' Compare users', 'value': 'Compare'}],
+                            values=[]
+                        )
+                    ], style={'visibility':'hidden'}),
+                    html.Label('Select length of gaze:'),
+                    dcc.Slider(
+                        id='time-slider',
+                            min=0,
+                            max=20,
+                            step=0.5,
+                            value=0,
+                            marks={
+                                0: '0'
+                            }
+                    ),
                 ]),
             ]),
         ]),
@@ -146,15 +208,38 @@ app.layout = html.Div(className="container", children=[
 @app.callback(
     dash.dependencies.Output('indicator-graphic', 'figure'),
     [dash.dependencies.Input('map-dropdown', 'value'),
-     dash.dependencies.Input('user-dropdown', 'value')])
-def update_graph(map, user):
-    traces = []
-    dff = split_data_on_map(map, df)
+     dash.dependencies.Input('user-dropdown', 'value'),
+     dash.dependencies.Input('compare-checkbox-users', 'values'),
+     dash.dependencies.Input('compare-checkbox-maps', 'values')])
+def update_graph(map, user, compare_users, compare_maps):
+    dff = split_data_on_map(map)
     traces = split_data_on_user(user, dff)
+
+    if len(compare_maps) == 1:
+        traces.insert(0,add_map(map))
+
+    if len(compare_users) == 1 and len(user) != 0:
+        trace = go.Scatter(
+            x=dff['MappedFixationPointX'],
+            y=dff['MappedFixationPointY'],
+            text=dff['Timestamp'],
+            mode='lines+markers',
+            name='Selected map',
+            marker=dict(
+                size=5,
+                opacity= 0.5,
+                color=('rgb(255, 153, 153)')
+            ),
+            line=dict(
+                color=('rgb(255, 153, 153)'),
+                width=0.5
+            )
+        )
+        traces.insert(0, trace)
 
     map_stripped = map.lstrip('0123456789_b')
     map_stripped = map_stripped[:-7]
-    sizemap = split_mapsize(map_stripped)
+    sizemap = set_mapsize(map_stripped)
 
     return dict(
         data= traces,
@@ -170,10 +255,10 @@ def update_graph(map, user):
                 range=[0, 1200]
             ),
             title=str(map),
-            margin={'l': 50, 'b': 40, 't': 50, 'r': 0},
+            margin={'l': 50, 'b': 40, 't': 50, 'r': 50},
             hovermode='closest',
             images= [dict(
-                  source= static_image_route + map,
+                  source= STATIC_IMAGE_ROUTE + map,
                   xref= "x",
                   yref= "y",
                   x= 0,
@@ -191,19 +276,43 @@ def update_graph(map, user):
     [dash.dependencies.Input('map-dropdown', 'value'),
      dash.dependencies.Input('user-dropdown', 'value')])
 def update_dropdown_user(map, user):
-    dff = split_data_on_map(map, df)
+    dff = split_data_on_map(map)
     usersmap = dff['user'].unique()
 
     return [{'label': j, 'value': j} for j in usersmap]
 
+@app.callback(
+    dash.dependencies.Output('user-dropdown', 'value'),
+    [dash.dependencies.Input('map-dropdown', 'value')])
+def update_user_dropdown(map):
+    return []
+
+@app.callback(
+    dash.dependencies.Output('compare-users', 'style'),
+    [dash.dependencies.Input('user-dropdown', 'value')])
+def update_checkbox_user(user):
+    if len(user) == 0:
+        return {'visibility':'hidden'}
+    else:
+        return {'visibility':'visible'}
+
+@app.callback(
+    dash.dependencies.Output('compare-maps', 'style'),
+    [dash.dependencies.Input('map-dropdown', 'value')])
+def update_checkbox_map(map):
+    if map == '':
+        return {'visibility':'hidden'}
+    else:
+        return {'visibility':'visible'}
+
 # Add a static image route that serves images from desktop
 # Be *very* careful here - you don't want to serve arbitrary files
 # from your computer or server
-@app.server.route('{}<image_path>'.format(static_image_route))
+@app.server.route('{}<image_path>'.format(STATIC_IMAGE_ROUTE))
 def serve_image(image_path):
     image_name = '{}'.format(image_path)
 
-    return flask.send_from_directory(image_directory, image_name)
+    return flask.send_from_directory(IMAGE_DIRECTORY, image_name)
 
 if __name__ == '__main__':
     app.run_server(debug=True)
